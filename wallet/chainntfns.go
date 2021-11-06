@@ -6,6 +6,7 @@ package wallet
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"time"
 
@@ -270,6 +271,41 @@ func (w *Wallet) disconnectBlock(dbtx walletdb.ReadWriteTx, b wtxmgr.BlockMeta) 
 	w.NtfnServer.notifyDetachedBlock(&b.Hash)
 
 	return nil
+}
+
+func (w *Wallet) AddRelevantTx(txHash chainhash.Hash, blockHash chainhash.Hash, height int32) error {
+	block, err := w.chainClient.GetBlock(&blockHash)
+	if err != nil {
+		return err
+	}
+
+	var closeTx *wire.MsgTx
+	for _, tx := range block.Transactions {
+		if tx.TxHash() == txHash {
+			closeTx = tx
+		}
+	}
+
+	if closeTx == nil {
+		log.Critical("XXX Transaction not found")
+		return errors.New("XXX transaction not found")
+	}
+
+	txRecord, err := wtxmgr.NewTxRecordFromMsgTx(closeTx, time.Now())
+	if err != nil {
+		return err
+	}
+
+	// TODO Not sure how much of all this logic should be in the db txn
+	return walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		return w.addRelevantTx(tx, txRecord, &wtxmgr.BlockMeta{
+			Block: wtxmgr.Block{
+				Hash:   blockHash,
+				Height: height,
+			},
+			Time: time.Now(),
+		})
+	})
 }
 
 func (w *Wallet) addRelevantTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord, block *wtxmgr.BlockMeta) error {
